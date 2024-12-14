@@ -4,8 +4,8 @@
   "description": "Module to run Gemini flash with some additional features",
   "main": "src/chatbot.mjs",
   "exports": {
-    ".": "src/chatbot.mjs",
-    "./emojis": "src/emojis.mjs"
+    ".": "./src/chatbot.mjs",
+    "./emojis": "./src/emojis.mjs"
   },
   "scripts": {
     "start": "node .",
