@@ -1,0 +1,32 @@
+{
+  "name": "chatbot",
+  "version": "1.0.0",
+  "description": "Module to run Gemini flash with some additional features",
+  "main": "src/chatbot.mjs",
+  "exports": {
+    ".": "src/chatbot.mjs",
+    "./emojis": "src/emojis.mjs"
+  },
+  "scripts": {
+    "start": "node .",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/af-t/chatbot.git"
+  },
+  "keywords": [
+    "ChatBot",
+    "gemini"
+  ],
+  "author": "Angga Firman",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/af-t/chatbot/issues"
+  },
+  "homepage": "https://github.com/af-t/chatbot#readme",
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "mime": "^4.0.4"
+  }
+}
