@@ -197,8 +197,6 @@ class ChatBot {
    * @returns {string} The new channel ID.
    */
   newChannel() {
-    this.channel = this.#genID();
-
     let id = this.#genID();
     while (this.#channels.has(id)) id = this.#genID()
 
@@ -225,7 +223,7 @@ class ChatBot {
 
       /** function to unlock channel, if this function is never executed,
          then the channel will never unlocked. */
-        return () => this.locked = false; 
+        return () => this.#locked = false; 
       }
       return true;
     }
