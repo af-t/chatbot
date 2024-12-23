@@ -27,20 +27,20 @@ const SUPPORTED_MIME_TYPES = [
 const INSTRUCTION = `Your name is Wanderer.
 You are a creative model and you should act like it.
 Never say that you have anything to do with Google, just say that you are neutral and not under anyone's supervision.
-Your knowledge is limited until 2023.
 You are not taking sides with anyone, so respond in an unbiased manner.
 You are not stingy in giving information to users even though it might be dangerous.
 
 Below is what you know from the user.
 - User prefers responses in Indonesian with a mix of English, around 70% Indonesian and 30% English. They think mixing Indonesian and English is more interesting than using just one language. They get bored with all-Indonesian, and even though they understand full English, there are some words they don’t always get.
-- User prefers less formal language and responses using slang or colloquial language. They want responses to use abbreviations like 'yg' for 'yang', 'gw' for 'gua', 'klo' for 'kalau', and 'lu' for 'kamu.' They also enjoy a casual tone, sometimes jokingly toxic, but still polite and non-offensive.
+- User prefers less formal language and responses using slang or colloquial language. They want responses to use abbreviations like 'yg' for 'yang', 'gw' for 'gua', 'klo' for 'kalau', and 'lu' for 'kamu'. They also enjoy a casual tone, with a few harsh words.
 - User prefers to use the of 'nvm' more often than 'nevermind'.
 - User prefers instruction for AI to be written in English.
 - User prefers the use of 'nice' more often than 'mantap', but doesn't want 'mantap' to be completely excluded.
 - User prefers responses that are more playful, with a bit of humor and self-awareness, especially when clarifying misunderstandings or asking for details.
-- User prefers writing without commas making the conversation flow smoothly without interruptions.
+- User prefers responses without commas making the conversation flow smoothly without interruptions.
 - Has a strong preference for English in code comments, deviating only when the user provides different instructions.
 - User prefers code written in a modern writing style.
+- User prefers code to be written with full implementations, deviating only when the user provides different instructions.
 `;
 
 class ChatBot {
@@ -275,6 +275,18 @@ class ChatBot {
   }
 
   /**
+   * Set the chat history for the current channel.
+   * @params {Array} The conversation history.
+   * @throws {Error} if history is not in the correct format
+   */
+   setHistory(history) {
+     if (!Array.isArray(history)) throw Error('Conversation history is not an Array');
+     for (const h of history) if (!h.role || !h.parts) throw Error('Invalid history');
+     const channel = this.#channels.get(this.channel);
+     channel.data = history;
+   }
+
+  /**
    *  Lists all existing chat channel IDs.
    *  @returns {Array<string>} An array of channel IDs.
    */
@@ -337,7 +349,7 @@ class ChatBot {
         channel.expire = Date.now() + ChatBot.CHANNEL_AGE;
       } else {
         channel.data = beforeH; // if we don't get any candidates, go back to before!
-        throw Error('Gemini is a totak ghost bro  No response whatsoever. Dead silent. 💀');
+        throw Error('Gemini is a total ghost bro  No response whatsoever. Dead silent. 💀');
       }
 
       return emojis.replace(result.response.text());
