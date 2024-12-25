@@ -96,6 +96,7 @@ class ChatBot {
     this.genAI = new GoogleGenerativeAI(token);
     this.fileManager = new GoogleAIFileManager(token);
     this.rpm = ChatBot.RPM;
+    this.isLimited = false;
     this.#lastChange = Date.now();
     this.#quota = ChatBot.RPM;
     this.#modelOptions = {
@@ -121,7 +122,10 @@ class ChatBot {
       const data = await fs.readFile(path);
       const mimeType = this.#isMostlyText(data) ? 'text/plain' : this.#checkMimeType(path);
 
-      if (!this.#isAllowedMime(mimeType)) return []; // If we can't handle that mime type, we bail!
+      if (!this.#isAllowedMime(mimeType)) {
+        console.warn(`Warn: file ${basename(path)} with mime type ${mimeType} was rejected and will not be uploaded`);
+        return []; // If we can't handle that mime type, we bail!
+      }
 
       const uploadRes = await this.fileManager.uploadFile(path, {
         mimeType,
@@ -172,9 +176,11 @@ class ChatBot {
 
     if (this.#queue.length > 0) {
       if (this.#quota < 1) { //if our quota has run out we gotta wait!
+        this.isLimited = true;
         const waitTime = Math.ceil((1 - this.#quota) / rpmmm); //Calculate how long to wait.
         await new Promise((resolve) => setTimeout(resolve, waitTime));
       }
+      this.isLimited = false;
       this.#queue[0]?.(); // resolve()
       this.#queue.shift();
     } else {
@@ -218,13 +224,7 @@ class ChatBot {
   moveChannel(id, lock = false) {
     if (!this.#locked && this.#channels.has(id)) {
       this.channel = id;
-      if (lock) {
-        this.#locked = true;
-
-      /** function to unlock channel, if this function is never executed,
-         then the channel will never unlocked. */
-        return () => this.#locked = false; 
-      }
+      if (lock) return this.lockChannel();
       return true;
     }
     return false;
