@@ -1,3 +1,5 @@
-*.lock
-*-lock.json
 node_modules
+*-lock.*
+.idx
+.vscode
+*.lock

@@ -2,10 +2,10 @@
   "name": "chatbot",
   "version": "1.0.0",
   "description": "Module to run Gemini flash with some additional features",
-  "main": "dist/index.node.min.js",
-  "module": "dist/index.min.js",
+  "main": "dist/index.node.js",
+  "module": "dist/index.js",
   "exports": {
-    ".": "./dist/index.min.js",
+    ".": "./dist/index.js",
     "./emojis": "./src/emojis.mjs"
   },
   "scripts": {
@@ -27,14 +27,8 @@
     "url": "https://github.com/af-t/chatbot/issues"
   },
   "homepage": "https://github.com/af-t/chatbot#readme",
-  "dependencies": {
+  "devDependencies": {
     "@google/generative-ai": "^0.21.0",
     "mime": "^4.0.6"
-  },
-  "devDependencies": {
-    "@rollup/plugin-dynamic-import-vars": "^2.1.5",
-    "@rollup/plugin-node-resolve": "^16.0.0",
-    "rollup": "^4.29.1",
-    "rollup-plugin-polyfill-node": "^0.13.0"
   }
 }
