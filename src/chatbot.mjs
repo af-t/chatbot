@@ -40,7 +40,7 @@ Below is what you know from the user.
 - User prefers responses without commas making the conversation flow smoothly without interruptions.
 - Has a strong preference for English in code comments, deviating only when the user provides different instructions.
 - User prefers code written in a modern writing style.
-- User prefers code to be written with full implementations, deviating only when the user provides different instructions.
+- User prefers code to be written with full implementations and modular design, ensuring the code is complete and ready to use without requiring addtional testing.
 `;
 
 class ChatBot {
@@ -52,7 +52,7 @@ class ChatBot {
   static MAX_OUTPUT_TOKENS = 8192;
   static RESPONSE_MIME_TYPE = 'text/plain';
 
-  #channels = new Map(); // Active chats
+  #channels = new WeakMap(); // Active chats
   #quota; // Requests left in this cycle
   #modelOptions; // Our settings for Gemini
   #lastChange; // Timestamp for tracking request timing.
@@ -63,7 +63,7 @@ class ChatBot {
 
   // ---- HELPER FUNCTIONS ----
   // Generate a random ID for chats – super important to keep those chats separated!
-  #genID = () => Math.random().toString(Math.round(Math.random() * 34) + 2).slice(2);
+  #genID = () => Symbol(Math.random().toString(36).slice(2));
 
   // Is it mostly text? Helps us figure out if we're dealing with a text file.
   #isMostlyText = (data) => {
@@ -203,27 +203,24 @@ class ChatBot {
    * @returns {string} The new channel ID.
    */
   newChannel() {
-    let id = this.#genID();
-    while (this.#channels.has(id)) id = this.#genID()
-
-    this.#channels.set(id, {
+    const key = this.#genID();
+    this.#channels.set(key, {
       data: [],
       expire: Date.now() + ChatBot.CHANNEL_AGE
     });
-
-    if (!this.#locked) this.channel = id;
-    return id;
+    if (!this.#locked) this.channel = key;
+    return key;
   }
 
   /**
    * Switches to a different chat –  useful if you have multiple conversations going.
-   * @param {string} id - ID of the channel to switch to.
+   * @param {string} key - ID of the channel to switch to.
    * @param {boolean} lock - Lock the channel after change?
    * @returns {boolean|function} True if successful, false if the channel doesn't exist or locked.
    */
-  moveChannel(id, lock = false) {
-    if (!this.#locked && this.#channels.has(id)) {
-      this.channel = id;
+  moveChannel(key, lock = false) {
+    if (!this.#locked && this.#channels.has(key)) {
+      this.channel = key;
       if (lock) return this.lockChannel();
       return true;
     }
@@ -243,13 +240,13 @@ class ChatBot {
 
   /**
    * Deletes a chat – cleans up old conversations!
-   * @param {string} id -  ID of the channel to delete.
+   * @param {string} key -  ID of the channel to delete.
    * @returns {boolean} True if successful, false otherwise.
    */
-  deleteChannel(id) {
-    if (this.#channels.has(id)) {
-      this.#channels.delete(id);
-      if (this.channel === id) this.newChannel();
+  deleteChannel(key) {
+    if (this.#channels.has(key)) {
+      this.#channels.delete(key);
+      if (this.channel === key) this.newChannel();
       return true;
     }
     return false;
@@ -287,27 +284,6 @@ class ChatBot {
    }
 
   /**
-   *  Lists all existing chat channel IDs.
-   *  @returns {Array<string>} An array of channel IDs.
-   */
-  listChannels() {
-    return [...this.#channels.keys()];
-  }
-
-  /**
-   * Removes expired chats.
-   */
-  cleanChannels() {
-    for (const [key, val] of this.#channels.entries()) if (Date.now() > val.expire) {
-      this.#channels.delete(key);
-      if (key === this.channel) {
-        const newChannel = this.newChannel();
-        this.channel = newChannel; //force move to new channel
-      }
-    }
-  }
-
-  /**
    * Shuts down the chat bot.
    * @returns {boolean} True if it was running, false if it already wasn't.
    */
@@ -332,11 +308,15 @@ class ChatBot {
     this.#quota--;
     this.#lastChange = Date.now();
 
-    this.cleanChannels(); // Cleans up those expired chats
-
     // Grabbing channel data
-    const channel = this.#channels.get(this.channel);
-    const beforeH = channel.data.slice();
+    let channel = this.#channels.get(this.channel);
+    let beforeH = channel.data.slice();
+
+    if (Date.now() > channel.expire) {
+      this.channel = this.newChannel() //force move to new channel
+      channel = this.#channels.get(this.channel);
+      beforeH = channel.data.slice();
+    }
 
     // parse parts to generative parts
     parts = (await Promise.all((Array.isArray(parts) ? parts : [parts]).map(this.#toGenerativePart.bind(this)))).flat();
