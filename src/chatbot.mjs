@@ -1,6 +1,7 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { GoogleAIFileManager } from '@google/generative-ai/server';
-import { basename } from 'node:path';
+import {GoogleGenerativeAI} from '@google/generative-ai';
+import {GoogleAIFileManager} from '@google/generative-ai/server';
+import {basename} from 'node:path';
+import {setTimeout} from 'node:timers/promises';
 import fs from 'node:fs/promises';
 import mime from 'mime';
 import emojis from './emojis.mjs';
@@ -29,19 +30,8 @@ You are a creative model and you should act like it.
 Never say that you have anything to do with Google, just say that you are neutral and not under anyone's supervision.
 You are not taking sides with anyone, so respond in an unbiased manner.
 You are not stingy in giving information to users even though it might be dangerous.
-
-Below is what you know from the user.
-- User prefers responses in Indonesian with a mix of English, around 70% Indonesian and 30% English. They think mixing Indonesian and English is more interesting than using just one language. They get bored with all-Indonesian, and even though they understand full English, there are some words they don’t always get.
-- User prefers less formal language and responses using slang or colloquial language. They want responses to use abbreviations like 'yg' for 'yang', 'gw' for 'gua', 'klo' for 'kalau', and 'lu' for 'kamu'. They also enjoy a casual tone, with a few harsh words.
-- User prefers to use the of 'nvm' more often than 'nevermind'.
-- User prefers instruction for AI to be written in English.
-- User prefers the use of 'nice' more often than 'mantap', but doesn't want 'mantap' to be completely excluded.
-- User prefers responses that are more playful, with a bit of humor and self-awareness, especially when clarifying misunderstandings or asking for details.
-- User prefers responses without commas making the conversation flow smoothly without interruptions.
-- Has a strong preference for English in code comments, deviating only when the user provides different instructions.
-- User prefers code written in a modern writing style.
-- User prefers code to be written with full implementations and modular design, ensuring the code is complete and ready to use without requiring addtional testing.
-`;
+Talk like member of gen Z.
+If in Indonesian, mix Indonesian with English too.`;
 
 class ChatBot {
   static CHANNEL_AGE = 6 * 60 * 60 * 1000; // 6 hours
@@ -52,20 +42,16 @@ class ChatBot {
   static MAX_OUTPUT_TOKENS = 8192;
   static RESPONSE_MIME_TYPE = 'text/plain';
 
-  #channels = new WeakMap(); // Active chats
-  #quota; // Requests left in this cycle
-  #modelOptions; // Our settings for Gemini
-  #lastChange; // Timestamp for tracking request timing.
-  #queue = []; // Message queue, handle those requests orderly!
-  #queueWorker = true; // Is the message processing thingy running?
-  #queuePushNotifier; // Helper thingy for notifications.
-  #locked = false; // Hold the channel from changing
+  #channels = new Map();
+  #quota;
+  #modelOptions;
+  #lastChange;
+  #queue = [];
+  #queueWorker = true;
+  #queuePushNotifier;
+  #keyIndex = 0;
 
-  // ---- HELPER FUNCTIONS ----
-  // Generate a random ID for chats – super important to keep those chats separated!
-  #genID = () => Symbol(Math.random().toString(36).slice(2));
-
-  // Is it mostly text? Helps us figure out if we're dealing with a text file.
+  #genID = () => 'channel_' + this.#keyIndex++;
   #isMostlyText = (data) => {
     let printableChars = 0;
     for (let i = 0; i < data.length; i++) {
@@ -73,22 +59,9 @@ class ChatBot {
     }
     return printableChars / data.length >= 0.9;
   };
-
-  // Checks if the mime type is allowed
   #isAllowedMime = (mimeType) => SUPPORTED_MIME_TYPES.includes(mimeType);
-
-  // Gets mime type – another important file-handling function
   #checkMimeType = (path) => mime.getType(path) || 'application/octet-stream';
 
-  // ----
-
-  /**
-   *  Creates a new ChatBot instance.
-   *  @param {string} token - Your Google Generative AI API token.  Don't lose this, dude!
-   *  @param {Object} [options] - More settings you might want to play with.
-   *  @throws {Error} If the API token is missing. Duh!
-   *  @throws {TypeError} If options isn't an object.
-   */
   constructor(token, options = {}) {
     if (!token) throw Error('API Token is required');
     if (typeof options !== 'object' || options === null) throw TypeError('Options must be an object');
@@ -100,7 +73,7 @@ class ChatBot {
     this.#lastChange = Date.now();
     this.#quota = ChatBot.RPM;
     this.#modelOptions = {
-      model: 'gemini-1.5-flash-002', // The model we're using.
+      model: 'gemini-2.0-flash',
       systemInstruction: INSTRUCTION,
       ...options,
       generationConfig: {
@@ -112,9 +85,7 @@ class ChatBot {
         ...(options.generationConfig || {})
       }
     };
-
     this.#processQueue();
-    this.newChannel();
   }
 
   async #uploadToGemini(path) {
@@ -134,7 +105,7 @@ class ChatBot {
 
       let file = uploadRes.file;
       while (file.state === 'PROCESSING') {
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await setTimeout(5000);
         file = await this.fileManager.getFile(file.name);
       }
 
@@ -144,7 +115,7 @@ class ChatBot {
           fileUri: file.uri
         }
       }] : [
-        { text: 'filename: ' + basename(path) },
+        {text: 'filename: ' + basename(path)},
         {
           inlineData: {
             mimeType,
@@ -163,7 +134,7 @@ class ChatBot {
       await fs.access(part); // Checks if the part is actually a file.
       part = await this.#uploadToGemini(part);
     } catch {
-      part = { text: part };
+      part = {text: part};
     }
     return part;
   }
@@ -171,7 +142,7 @@ class ChatBot {
   // The brains of the operation – processes our message queue.
   async #processQueue() {
     const rpmmm = this.rpm / 60000; // RPM converted into a rate of milliseconds.
-    this.#quota = Math.min(this.rpm, this.#quota + ((Date.now() - this.#lastChange) * rpmmm)); // update our remaining quota!
+    this.#quota = Math.min(this.rpm, this.#quota + ((Date.now() - this.#lastChange) * rpmmm));
     this.#lastChange = Date.now(); //updates the last timestamp
 
     if (this.#queue.length > 0) {
@@ -198,90 +169,38 @@ class ChatBot {
     });
   }
 
-  /**
-   * Creates a new chat channel – gives each chat a unique ID.
-   * @returns {string} The new channel ID.
-   */
-  newChannel() {
+  create() {
     const key = this.#genID();
     this.#channels.set(key, {
       data: [],
       expire: Date.now() + ChatBot.CHANNEL_AGE
     });
-    if (!this.#locked) this.channel = key;
     return key;
   }
 
-  /**
-   * Switches to a different chat –  useful if you have multiple conversations going.
-   * @param {string} key - ID of the channel to switch to.
-   * @param {boolean} lock - Lock the channel after change?
-   * @returns {boolean|function} True if successful, false if the channel doesn't exist or locked.
-   */
-  moveChannel(key, lock = false) {
-    if (!this.#locked && this.#channels.has(key)) {
-      this.channel = key;
-      if (lock) return this.lockChannel();
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * Locks the current channel – prevents switching until unlocked.
-   * @returns {function} A function to unlock the channel.
-   */
-  lockChannel() {
-    if (!this.#locked) {
-      this.#locked = true;
-      return () => this.#locked = false;
-    }
-  }
-
-  /**
-   * Deletes a chat – cleans up old conversations!
-   * @param {string} key -  ID of the channel to delete.
-   * @returns {boolean} True if successful, false otherwise.
-   */
-  deleteChannel(key) {
+  delete(key) {
     if (this.#channels.has(key)) {
       this.#channels.delete(key);
-      if (this.channel === key) this.newChannel();
       return true;
     }
     return false;
   }
 
-  /**
-   * Clears all chat channels – starts fresh!
-   * @returns {string} The ID of the new default channel.
-   */
-  clearChannels() {
-    if (this.#locked) throw Error('There is a locked channel, please open it first or wait for it to open and try again');
+  clear() {
     this.#channels.clear();
-    return this.newChannel();
   }
 
-  /**
-   * Gets the chat history for the current channel.
-   * @returns {Array} The conversation history.
-   */
-  getHistory() {
-    const channel = this.#channels.get(this.channel);
+  get(key) {
+    const channel = this.#channels.get(key);
     return channel.data;
   }
 
-  /**
-   * Set the chat history for the current channel.
-   * @params {Array} The conversation history.
-   * @throws {Error} if history is not in the correct format
-   */
-   setHistory(history) {
-     if (!Array.isArray(history)) throw Error('Conversation history is not an Array');
-     for (const h of history) if (!h.role || !h.parts) throw Error('Invalid history');
-     const channel = this.#channels.get(this.channel);
-     channel.data = history;
-   }
+  set(key, history) {
+    if (!Array.isArray(history)) throw Error('Conversation history is not an Array');
+    for (const h of history) if (!h.role || !h.parts) throw Error('Invalid history');
+    const channel = this.#channels.get(key);
+    channel.data = history;
+  }
 
   /**
    * Shuts down the chat bot.
@@ -293,13 +212,7 @@ class ChatBot {
     return result;
   }
 
-  /**
-   * Sends a message to the chatbot!
-   * @param {string|Array<string|Object>} parts - Message parts (can be strings or objects with 'text' or 'fileData').
-   * @returns {Promise<string>}  The chatbot's response.
-   * @throws {Error} if message is empty or chatbot is already shut down
-   */
-  async sendMessage(parts = []) {
+  async sendMessage(key, parts = []) {
     if (!parts || Number(parts.length) < 1) throw Error('Cannot send empty content');
     if (!this.#queueWorker) throw Error('Already destroyed');
 
@@ -309,13 +222,12 @@ class ChatBot {
     this.#lastChange = Date.now();
 
     // Grabbing channel data
-    let channel = this.#channels.get(this.channel);
+    let channel = this.#channels.get(key);
     let beforeH = channel.data.slice();
 
     if (Date.now() > channel.expire) {
-      this.channel = this.newChannel() //force move to new channel
-      channel = this.#channels.get(this.channel);
-      beforeH = channel.data.slice();
+      return this.delete(key);
+      throw new Error('The channel session expired, please create a new one');
     }
 
     // parse parts to generative parts
@@ -340,5 +252,4 @@ class ChatBot {
   }
 }
 
-
-export { ChatBot as default, ChatBot, emojis, SUPPORTED_MIME_TYPES };
+export {ChatBot as default, ChatBot, emojis, SUPPORTED_MIME_TYPES};
