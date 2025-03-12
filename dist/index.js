@@ -3127,7 +3127,7 @@ const types = {
 };
 Object.freeze(types);
 
-var __classPrivateFieldGet = (global && global.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
@@ -3695,13 +3695,31 @@ class ChatBot {
     this.#quota--;
     this.#lastChange = Date.now();
 
+    // NULL channel
+    const nul_key = this.create();
+    const nul_channel = this.#channels.get(nul_key);
+    const nul_history = [];
+    this.delete(nul_key); //Delete temporary channel
+
     // Grabbing channel data
-    let channel = this.#channels.get(key);
-    let beforeH = channel.data.slice();
+    let channel;
+    let beforeH;
+    if (this.#channels.has(key)) {
+      channel = this.#channels.get(key);
+      beforeH = channel.data.slice();
+    } else {
+      channel = nul_channel;
+      beforeH = nul_history;
+    }
 
     if (Date.now() > channel.expire) {
-      return this.delete(key);
+      channel = nul_channel;
+      beforeH = nul_history;
+      console.warn('The channel session expired');
     }
+
+    // ensure that the channel is always in Map
+    this.#channels.set(key, channel);
 
     // parse parts to generative parts
     parts = (await Promise.all((Array.isArray(parts) ? parts : [parts]).map(this.#toGenerativePart.bind(this)))).flat();
