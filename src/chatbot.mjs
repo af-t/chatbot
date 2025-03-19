@@ -2,6 +2,7 @@ import {GoogleGenerativeAI} from '@google/generative-ai';
 import {GoogleAIFileManager} from '@google/generative-ai/server';
 import {basename} from 'node:path';
 import {setTimeout} from 'node:timers/promises';
+import {hash} from 'node:crypto';
 import fs from 'node:fs/promises';
 import mime from 'mime';
 import emojis from './emojis.mjs';
@@ -12,6 +13,7 @@ const SUPPORTED_MIME_TYPES = [
   'audio/mpeg',
   'audio/mp3',
   'audio/wav',
+  'audio/ogg',
   'image/png',
   'image/jpeg',
   'text/plain',
@@ -35,6 +37,7 @@ If in Indonesian, mix Indonesian with English too.`;
 
 class ChatBot {
   static CHANNEL_AGE = 6 * 60 * 60 * 1000; // 6 hours
+  static FILE_AGE = 10 * 60 * 60 * 1000; // 10 hours
   static RPM = 15;
   static TEMPERATURE = 2.0;
   static TOP_P = 0.95;
@@ -43,6 +46,7 @@ class ChatBot {
   static RESPONSE_MIME_TYPE = 'text/plain';
 
   #channels = new Map();
+  #files = new Map();
   #quota;
   #modelOptions;
   #lastChange;
@@ -92,37 +96,46 @@ class ChatBot {
     try {
       const data = await fs.readFile(path);
       const mimeType = this.#isMostlyText(data) ? 'text/plain' : this.#checkMimeType(path);
+      const csum = hash('sha3-224', data);
 
       if (!this.#isAllowedMime(mimeType)) {
         console.warn(`Warn: file ${basename(path)} with mime type ${mimeType} was rejected and will not be uploaded`);
-        return []; // If we can't handle that mime type, we bail!
+        return [{text: `[Unsupported media type: ${mimeType}]`}];
       }
 
-      const uploadRes = await this.fileManager.uploadFile(path, {
-        mimeType,
-        displayName: basename(path) // filename
-      });
+      if (this.#files.has(csum)) {
+        const metadata = this.#files.get(csum);
+        return metadata.file;
+      } else {
+        const uploadRes = await this.fileManager.uploadFile(path, {
+          mimeType,
+          displayName: basename(path) // filename
+        });
 
-      let file = uploadRes.file;
-      while (file.state === 'PROCESSING') {
-        await setTimeout(5000);
-        file = await this.fileManager.getFile(file.name);
-      }
-
-      return file.state === 'ACTIVE' ? [{
-        fileData: {
-          mimeType: file.mimeType,
-          fileUri: file.uri
+        let file = uploadRes.file;
+        while (file.state === 'PROCESSING') {
+          await setTimeout(5000);
+          file = await this.fileManager.getFile(file.name);
         }
-      }] : [
-        {text: 'filename: ' + basename(path)},
-        {
-          inlineData: {
-            mimeType,
-            data: data.toString('base64')
+
+        file = file.state === 'ACTIVE' ? [{
+          fileData: {
+            mimeType: file.mimeType,
+            fileUri: file.uri
           }
-        }
-      ];
+        }] : [
+          {text: 'filename: '+basename(path)},
+          {
+            inlineData: {
+              mimeType,
+              data: data.toString('base64')
+            }
+          }
+        ];
+
+        this.#files.set(csum, {file, expire: Date.now() + ChatBot.FILE_AGE});
+        return file;
+      }
     } catch (error) {
       console.warn('Gemini upload error:', error);
       return []; // Return empty array if something goes wrong.
@@ -141,15 +154,17 @@ class ChatBot {
 
   // The brains of the operation – processes our message queue.
   async #processQueue() {
-    const rpmmm = this.rpm / 60000; // RPM converted into a rate of milliseconds.
-    this.#quota = Math.min(this.rpm, this.#quota + ((Date.now() - this.#lastChange) * rpmmm));
-    this.#lastChange = Date.now(); //updates the last timestamp
+    const tokenPerMS = this.rpm / 60000;
+    const time = Date.now() - this.#lastChange;
+    const tokenRec = tokenPerMS * time;
+    this.#quota = Math.min(this.rpm, this.#quota + tokenRec);
+    this.#lastChange = Date.now();
 
     if (this.#queue.length > 0) {
       if (this.#quota < 1) { //if our quota has run out we gotta wait!
         this.isLimited = true;
-        const waitTime = Math.ceil((1 - this.#quota) / rpmmm); //Calculate how long to wait.
-        await new Promise((resolve) => setTimeout(resolve, waitTime));
+        const waitTime = Math.ceil((1 - this.#quota) / tokenPerMS);
+        await setTimeout(waitTime);
       }
       this.isLimited = false;
       this.#queue[0]?.(); // resolve()
@@ -157,6 +172,16 @@ class ChatBot {
     } else {
       await new Promise((resolve) => this.#queuePushNotifier = resolve); //Waits for a push message.
       this.#queuePushNotifier = null;
+    }
+
+    // clear expired file cache
+    for (const [key, {expire}] of this.#files.entries()) {
+      if (Date.now() > expire) this.#files.delete(key);
+    }
+
+    // clear expired channels
+    for (const [key, {expire}] of this.#channels.entries()) {
+      if (Date.now() > expire) this.#channels.delete(key);
     }
 
     if (this.#queueWorker) this.#processQueue();
@@ -238,12 +263,6 @@ class ChatBot {
       beforeH = nul_history;
     }
 
-    if (Date.now() > channel.expire) {
-      channel = nul_channel;
-      beforeH = nul_history;
-      console.warn('The channel session expired');
-    }
-
     // ensure that the channel is always in Map
     this.#channels.set(key, channel);
 
@@ -253,7 +272,7 @@ class ChatBot {
     const chat = this.genAI.getGenerativeModel(this.#modelOptions).startChat({ history: channel.data.slice() });
     try {
       const result = await chat.sendMessage(parts);
-      if (Number(result.response.candidates[0].content?.parts?.length) > 0) {
+      if (Number(result.response.candidates[0]?.content?.parts?.length) > 0) {
         channel.data = chat._history.slice();
         channel.expire = Date.now() + ChatBot.CHANNEL_AGE;
       } else {
